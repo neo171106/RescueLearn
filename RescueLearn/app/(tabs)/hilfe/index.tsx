@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Dimensions, Text } from 'react-native';
+import { View, StyleSheet, Dimensions, Text, ScrollView } from 'react-native';
 import * as Location from 'expo-location';
 import { WebView } from 'react-native-webview';
 
@@ -9,51 +9,44 @@ export default function Hilfe() {
     longitude: number;
   } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [hospitals, setHospitals] = useState<string[]>([]); // Liste der Krankenhäuser
 
   useEffect(() => {
     const getLocation = async () => {
-      if (typeof navigator.geolocation !== 'undefined') {
-        // Für Web
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            setLocation({
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-            });
-          },
-          (error) => {
-            setErrorMsg(error.message);
-          },
-          {
-            enableHighAccuracy: true,
-            timeout: 20000,
-            maximumAge: 1000,
-          }
-        );
-      } else {
-        // Für mobile Geräte (mit expo-location)
-        let { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') {
-          setErrorMsg('Permission to access location was denied');
-          return;
-        }
-
-        const subscription = await Location.watchPositionAsync(
-          {
-            accuracy: Location.Accuracy.High,
-            timeInterval: 5000,
-            distanceInterval: 10,
-          },
-          (newLocation) => {
-            setLocation({
-              latitude: newLocation.coords.latitude,
-              longitude: newLocation.coords.longitude,
-            });
-          }
-        );
-
-        return () => subscription.remove();
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setErrorMsg('Permission to access location was denied');
+        return;
       }
+
+      const { coords } = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      setLocation({ latitude: coords.latitude, longitude: coords.longitude });
+
+      // API-Aufruf für nahegelegene Krankenhäuser
+      const fetchHospitals = async () => {
+        if (coords.latitude && coords.longitude) {
+          const radius = 5000; // 5km
+          const apiKey = 'missing api'; // Dein API-Key hier
+
+          try {
+            const response = await fetch(
+              `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${coords.latitude},${coords.longitude}&radius=${radius}&type=hospital&key=${apiKey}`
+            );
+            const data = await response.json();
+
+            if (data.results) {
+              const hospitalList = data.results.map((result: any) => `${result.name}: ${result.vicinity}`);
+              setHospitals(hospitalList);
+            }
+          } catch (error) {
+            console.error('Error fetching hospitals:', error);
+          }
+        }
+      };
+
+      fetchHospitals();
     };
 
     getLocation();
@@ -62,25 +55,71 @@ export default function Hilfe() {
   const generateGoogleMapsUrl = () => {
     if (location) {
       const { latitude, longitude } = location;
-      return `https://www.google.com/maps/search/hospitals/@${latitude},${longitude},15z`;
+      return `https://www.google.com/maps/embed/v1/place?key=AIzaSyCPyyDH0JtDNVEs_hbKl97UAlRLYFoxGHE&q=hospitals&center=${latitude},${longitude}&zoom=15`;
     }
     return 'https://www.google.com/maps';
   };
 
+  // HTML für die WebView mit eingebettetem iframe
+  const generateHtml = () => {
+    const mapUrl = generateGoogleMapsUrl();
+    return `
+      <html>
+        <body style="margin:0;">
+          <iframe 
+            width="100%" 
+            height="100%" 
+            frameborder="0" 
+            style="border:0" 
+            src="${mapUrl}" 
+            allowfullscreen>
+          </iframe>
+        </body>
+      </html>
+    `;
+  };
+
   return (
     <View style={styles.container}>
-      <Text>hello</Text>
-      {errorMsg ? (
-        <View style={styles.errorContainer}>
-          <Text>{errorMsg}</Text>
-        </View>
-      ) : location ? (
-        <WebView source={{ uri: generateGoogleMapsUrl() }} style={styles.map} />
-      ) : (
-        <View style={styles.loadingContainer}>
+      <ScrollView contentContainerStyle={styles.contentContainer}>
+        <Text style={styles.title}>Your Current Location</Text>
+        {location ? (
+          <Text style={styles.locationText}>
+            Latitude: {location.latitude}, Longitude: {location.longitude}
+          </Text>
+        ) : (
           <Text>Tracking location...</Text>
-        </View>
-      )}
+        )}
+
+        <Text style={styles.title}>Nearby Hospitals</Text>
+        {hospitals.length > 0 ? (
+          hospitals.map((hospital, index) => (
+            <Text key={index} style={styles.hospitalText}>
+              {hospital}
+            </Text>
+          ))
+        ) : (
+          <Text>No nearby hospitals found</Text>
+        )}
+
+        {errorMsg ? (
+          <View style={styles.errorContainer}>
+            <Text>{errorMsg}</Text>
+          </View>
+        ) : location ? (
+          <WebView
+            originWhitelist={['*']}
+            source={{ html: generateHtml() }}
+            style={styles.map}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+          />
+        ) : (
+          <View style={styles.loadingContainer}>
+            <Text>Loading map...</Text>
+          </View>
+        )}
+      </ScrollView>
     </View>
   );
 }
@@ -88,10 +127,30 @@ export default function Hilfe() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#fff',
+  },
+  contentContainer: {
+    padding: 10,
+    flexGrow: 1,
+    justifyContent: 'flex-start',
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginVertical: 10,
+  },
+  locationText: {
+    fontSize: 16,
+    marginBottom: 10,
+  },
+  hospitalText: {
+    fontSize: 16,
+    marginBottom: 5,
   },
   map: {
     width: Dimensions.get('window').width,
-    height: Dimensions.get('window').height,
+    height: 300, // Verkleinerte Höhe der Google Maps Karte
+    marginTop: 20,
   },
   loadingContainer: {
     flex: 1,
